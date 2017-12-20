@@ -10,12 +10,16 @@ class State(Enum):
     ON = 1
 
 class e4980al:
-    def __init__(self):
+    def __init__(self, auto_choose = False):
         self.e4980al_usb_id = "0x0957::0x0909"
-        instrument_visa_identifier = self.select_instrument()
+        instrument_visa_identifier = self.select_instrument(auto_choose)
+        if instrument_visa_identifier is None:
+            raise Exception
         self.init_instrument(instrument_visa_identifier)
 
-    def select_instrument(self):
+        self.bias = 0.0
+
+    def select_instrument(self, auto_choose):
         found_count = 0
         rm = visa.ResourceManager()
         reslist = rm.list_resources()
@@ -24,17 +28,21 @@ class e4980al:
             if self.e4980al_usb_id in r:
                 e4980al_dict[found_count] = r
                 found_count += 1
-        if found_count > 1:
+        if found_count == 0:
+            visa_address =  None
+        elif auto_choose or found_count == 1:
+            visa_address = e4980al_dict[0]
+            print("Auto selected instument: {}".format(visa_address))
+        else:
             for idx, r in e4980al_dict.items():
                 print("({idx}), {res_name}".format(idx=idx+1, res_name=r))
             i = int(input("Which instument?: ")) - 1
             visa_address = e4980al_dict[i]
             print("Selected instument: {}".format(visa_address))
-        else:
-            visa_address = e4980al_dict[0]
-            print("Auto selected instument: {}".format(visa_address))
 
         return visa_address
+
+
 
     def init_instrument(self, instrument_visa_identifier):
         rm = visa.ResourceManager()
@@ -47,16 +55,16 @@ class e4980al:
         # :FUNCtion:IMPedance[:TYPE]
         # {CPD|CPQ|CPG|CPRP|CSD|CSQ|CSRS|LPD|LPQ|LPG|LPRP|LPRD|LSD|LSQ|LSRS|LSRD|RX|ZTD|ZTR|GB|YTD|YTR|VDID}
 
-        if self.meas_type_vald(meas_type):
+        if self.meas_type_valid(meas_type):
             print("Measurement type: " + meas_type.upper())
-            self.write(":FUNC:IMP:TYPE {}".format(meas_type.upper()))
+            self.write(":FUNC:IMP {}".format(meas_type.upper()))
         else:
             print("INVALID! measurement type: " + meas_type.upper(), file=sys.stderr)
 
-    def meas_type_vald(self, meas_type):
+    def meas_type_valid(self, meas_type):
         available_meas_types = ["CPD", "CPQ", "CPG", "CPRP", "CSD", "CSQ", "CSRS", "LPD", "LPQ", "LPG", "LPRP", "LPRD", "LSD", "LSQ", "LSRS",
          "LSRD", "RX", "ZTD", "ZTR", "GB", "YTD", "YTR", "VDID"]
-        if meas_type in available_meas_types:
+        if meas_type.upper() in available_meas_types:
             return True
         else:
             return False
@@ -108,7 +116,7 @@ class e4980al:
         # :DISPlay:LINE <String>
         # :DISPlay:LINE?
         if len(comment) <= 30:
-            self.inst.write(":DISP:LINE {}".format(comment))
+            self.inst.write(":DISP:LINE \"{}\"".format(comment))
         else:
             print("INVALID! Max. 30 ASCII chars allowed", file=sys.stderr)
 
@@ -150,14 +158,35 @@ class e4980al:
         linsp = np.linpace(from_val, to_val, num=number_of_steps, endpoint=True, dtype=None)
         return linsp
 
+
+    def fetch(self):
+        str = self.inst.query(":FETC?")
+        l = str.split(",")
+        l = list(map(float, l))
+        return l
+
+    def beep_type(self, beep_t):
+        self.inst.query(":SYSTem:BEEPer:TONE {}".format(beep_t))
+
+    def beep_enable(self, state):
+        # Syntax:
+        # :SYSTem:BEEPer: STATe {ON | OFF | 1 | 0}
+        # :SYSTem: BEEPer:STATe?
+        self.inst.query(":SYSTem:BEEPer:STATe {}".format(state))
+
+    def beep(self):
+        self.inst.write(":SYSTem:BEEPer:IMMediate")
+
     def meas_point(self, hz, voltage):
         self.set_meas_freq(hz)
-        str = self.inst.query("FETC?")
+        str = self.inst.query(":FETC?")
         l = str.split(",")
         l = list(map(float, l))
         m1 = l[0]
         m2 = l[1]
         return hz, m1, m2
+
+
 
     def manual_list_measure(self, meas_type, from_hz, to_hz, steps):
         l = []
